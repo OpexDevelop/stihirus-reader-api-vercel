@@ -16,31 +16,38 @@ const port = process.env.PORT || 30010;
 
 app.use(cors());
 
-// --- ИЗМЕНЕНИЕ 1: Папка кэша ---
-// В Vercel писать можно ТОЛЬКО в /tmp.
-// Локально пишем в текущую папку, в облаке (если есть ENV VERCEL) — в /tmp
-const IS_VERCEL = process.env.VERCEL || process.env.AWS_REGION; // Vercel sets AWS_REGION too usually
-const CACHE_DIR = IS_VERCEL ? '/tmp' : __dirname; 
+// --- ИСПРАВЛЕНИЕ 1: Папка кэша ---
+// Vercel разрешает запись ТОЛЬКО в папку /tmp
+// Если мы на Vercel (есть ENV), используем /tmp, иначе текущую папку
+const IS_VERCEL = process.env.VERCEL || process.env.AWS_REGION;
+const CACHE_DIR = IS_VERCEL ? '/tmp' : __dirname;
 const CACHE_DURATION_MS = 60 * 60 * 1000; 
 
-// --- ИЗМЕНЕНИЕ 2: Путь к openapi.yaml ---
-// Vercel иногда путает __dirname при сборке, process.cwd() надежнее для статических файлов в корне
+console.log(`Environment: ${IS_VERCEL ? 'Vercel/Serverless' : 'Local'}, Cache Dir: ${CACHE_DIR}`);
+
+// --- ИСПРАВЛЕНИЕ 2: Загрузка OpenAPI ---
 let swaggerDocument;
 try {
+    // process.cwd() надежнее на Vercel для файлов, указанных в includeFiles
     const yamlPath = path.join(process.cwd(), 'openapi.yaml');
     swaggerDocument = YAML.load(yamlPath);
 } catch (e) {
-    console.error("Ошибка загрузки openapi.yaml. Пробуем fallback путь...", e);
-    // Fallback на случай локального запуска, если cwd не совпадает
+    console.error("Primary load failed, trying fallback...", e);
     try {
         swaggerDocument = YAML.load(path.join(__dirname, 'openapi.yaml'));
     } catch (e2) {
-        console.error("Не удалось загрузить openapi.yaml", e2);
+        console.error("CRITICAL: openapi.yaml not found!", e2);
     }
 }
 
+// --- ИСПРАВЛЕНИЕ 3: CSS для Swagger ---
+// Исправляет "белый экран", загружая стили с CDN
 if (swaggerDocument) {
-    app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+    const swaggerOptions = {
+        customCssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui.min.css',
+        customSiteTitle: "StihiRus API Docs"
+    };
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerOptions));
 }
 
 // --- Функции кэширования ---
@@ -73,7 +80,6 @@ async function readCache(key) {
         if (err.code === 'ENOENT') {
             return { exists: false };
         }
-        // Не засоряем логи ошибками отсутствия файла
         return { exists: false, error: true };
     }
 }
@@ -84,7 +90,7 @@ async function writeCache(key, data) {
         const content = JSON.stringify(data);
         await fs.writeFile(filePath, content, 'utf-8');
     } catch (err) {
-        console.error(`Error writing cache file ${key} to ${CACHE_DIR}:`, err);
+        console.error(`Error writing cache to ${filePath}:`, err);
     }
 }
 
@@ -123,7 +129,6 @@ app.get('/author/:identifier', async (req, res) => {
     try {
         cacheEntry = await readCache(cacheKey);
         if (cacheEntry.exists && !cacheEntry.isStale) {
-            // console.log(`Serving ${identifier} from cache`); // Можно закомментить для чистоты логов Vercel
             return res.json(cacheEntry.data);
         }
 
@@ -186,14 +191,24 @@ app.get('/', (req, res) => {
     res.redirect('/docs');
 });
 
-// --- ИЗМЕНЕНИЕ 3: Экспорт для Vercel + Локальный старт ---
-// Если мы НЕ в production (или скрипт запущен напрямую), слушаем порт
+// --- Debug Endpoint (опционально, для проверки файлов) ---
+app.get('/debug-info', (req, res) => {
+    res.json({
+        cwd: process.cwd(),
+        dirname: __dirname,
+        cacheDir: CACHE_DIR,
+        isVercel: !!IS_VERCEL
+    });
+});
+
+// --- ИСПРАВЛЕНИЕ 4: Экспорт для Vercel ---
+// Если мы НЕ в production и НЕ на Vercel, слушаем порт (локальная разработка)
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     app.listen(port, () => {
         console.log(`StihiRus API Server listening on port: ${port}`);
-        console.log(`Cache directory: ${CACHE_DIR}`);
+        console.log(`Docs: http://localhost:${port}/docs`);
     });
 }
 
-// Обязательно экспортируем app для Vercel
+// Для Vercel обязательно нужен export default
 export default app;
