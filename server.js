@@ -85,6 +85,16 @@ async function writeCache(key, data) {
     }
 }
 
+app.get('/', (req, res) => {
+    const indexPath = path.join(process.cwd(), 'public', 'index.html');
+    res.sendFile(indexPath);
+});
+
+app.get('/stihi', (req, res) => {
+    const stihiPath = path.join(process.cwd(), 'public', 'stihi.html');
+    res.sendFile(stihiPath);
+});
+
 app.get('/author/:identifier', async (req, res) => {
     const identifier = req.params.identifier;
     let page = req.query.page;
@@ -172,10 +182,6 @@ app.get('/author/:identifier/filters', async (req, res) => {
             return res.status(500).json({ status: 'error', error: { code: 500, message: 'Internal Server Error' } });
          }
     }
-});
-
-app.get('/', (req, res) => {
-    res.redirect('/docs');
 });
 
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
