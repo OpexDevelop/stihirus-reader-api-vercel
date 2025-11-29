@@ -24,7 +24,7 @@ const pool = new Pool({
     idleTimeoutMillis: 30000
 });
 
-// --- INIT DB ---
+// --- INIT DB --- 
 async function initDB() {
     const client = await pool.connect();
     try {
