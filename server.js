@@ -28,7 +28,6 @@ const pool = new Pool({
 async function initDB() {
     const client = await pool.connect();
     try {
-        // 1. Logs Table
         await client.query(`
             CREATE TABLE IF NOT EXISTS request_logs (
                 id SERIAL PRIMARY KEY,
@@ -43,7 +42,6 @@ async function initDB() {
         `);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_logs_created ON request_logs(created_at);`);
 
-        // 2. Authors Table
         await client.query(`
             CREATE TABLE IF NOT EXISTS authors (
                 id SERIAL PRIMARY KEY,
@@ -58,7 +56,6 @@ async function initDB() {
             );
         `);
 
-        // 3. Poems Table
         await client.query(`
             CREATE TABLE IF NOT EXISTS poems (
                 id BIGINT PRIMARY KEY,
@@ -99,12 +96,33 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// --- SWAGGER ---
+// --- SWAGGER SETUP (FIXED FOR VERCEL) ---
 let swaggerDocument;
 try {
+    // Попытка 1: Стандартный путь
     swaggerDocument = YAML.load(path.join(process.cwd(), 'openapi.yaml'));
-    if (swaggerDocument) app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-} catch (e) {}
+} catch (e) {
+    try {
+        // Попытка 2: Путь относительно файла (fallback)
+        swaggerDocument = YAML.load(path.join(__dirname, 'openapi.yaml'));
+    } catch (e2) {
+        console.error("Swagger YAML not found:", e2);
+    }
+}
+
+if (swaggerDocument) {
+    const swaggerOptions = {
+        // Использование CDN решает проблему белого экрана на Vercel,
+        // так как статика грузится с внешнего сервера, а не из node_modules функции
+        customCssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui.min.css',
+        customJs: [
+            'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui-bundle.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui-standalone-preset.min.js'
+        ],
+        customSiteTitle: "StihiRus API Docs"
+    };
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerOptions));
+}
 
 // --- HELPERS ---
 
@@ -198,7 +216,7 @@ async function getFilteredPoemsFromDB(identifier, queryParams) {
         }
 
         // 3. SORTING
-        let orderBy = `ORDER BY id DESC`; // Default: Newest
+        let orderBy = `ORDER BY id DESC`; 
 
         if (sort) {
             switch (sort) {
@@ -270,10 +288,9 @@ async function getFilteredPoemsFromDB(identifier, queryParams) {
 
 // --- ROUTES ---
 
-// 1. Robots (UPDATED)
+// 1. Robots
 app.get('/robots.txt', (req, res) => {
     res.type('text/plain');
-    // Allow: /$ (Root only), /stihi, /docs. Disallow everything else (/)
     res.send(`User-agent: *\nAllow: /$\nAllow: /stihi\nAllow: /docs\nDisallow: /`);
 });
 
@@ -329,7 +346,6 @@ app.get('/author/:identifier', async (req, res) => {
             const freshData = await getAuthorData(identifier, pageNum, delayMs);
             if (freshData.status === 'success') {
                 await savePageToDB(identifier, freshData.data);
-                // Если нет фильтров/поиска, отдаем сразу
                 if (!req.query.q && !req.query.year && !req.query.rubric && !req.query.sort) {
                     return res.json(freshData);
                 }
@@ -337,14 +353,13 @@ app.get('/author/:identifier', async (req, res) => {
                  return res.status(freshData.error?.code || 500).json(freshData);
             }
         } else {
-            // Smart Sync (проверка 1-й страницы)
+            // Smart Sync
             const checkResult = await getAuthorData(identifier, 1, delayMs);
             if (checkResult.status === 'success') {
                 await savePageToDB(identifier, checkResult.data);
                 const fetchedIds = (checkResult.data.poems || []).map(p => p.id);
                 const existingIds = await checkExistingIds(fetchedIds);
 
-                // Докачиваем, если есть новые
                 if (existingIds.length !== fetchedIds.length) {
                     console.log(`[${identifier}] Syncing new content...`);
                     let currentPage = 2;
